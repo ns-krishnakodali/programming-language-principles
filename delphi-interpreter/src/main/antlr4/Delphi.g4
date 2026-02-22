@@ -9,7 +9,7 @@ options {
 }
 
 program
-    : programHeading (INTERFACE)? block DOT EOF
+    : programHeading block DOT EOF
     ;
 
 programHeading
@@ -21,6 +21,10 @@ identifier
     : IDENT
     ;
 
+methodIdentifier
+    : identifier (DOT identifier)?
+    ;
+
 block
     : (
         labelDeclarationPart
@@ -29,8 +33,12 @@ block
         | variableDeclarationPart
         | procedureAndFunctionDeclarationPart
         | usesUnitsPart
-        | IMPLEMENTATION
+        | implementationPart
     )* compoundStatement
+    ;
+
+implementationPart
+    : IMPLEMENTATION
     ;
 
 usesUnitsPart
@@ -113,6 +121,8 @@ type_
     : simpleType
     | structuredType
     | pointerType
+    | classType
+    | interfaceType
     ;
 
 simpleType
@@ -224,16 +234,26 @@ variableDeclaration
     ;
 
 procedureAndFunctionDeclarationPart
-    : procedureOrFunctionDeclaration SEMI
-    ;
-
-procedureOrFunctionDeclaration
-    : procedureDeclaration
+    : (procedureDeclaration
     | functionDeclaration
+    | constructorImplementation
+    | destructorImplementation) SEMI
     ;
 
 procedureDeclaration
-    : PROCEDURE identifier (formalParameterList)? SEMI block
+    : PROCEDURE methodIdentifier (formalParameterList)? SEMI block
+    ;
+
+functionDeclaration
+    : FUNCTION methodIdentifier (formalParameterList)? COLON resultType SEMI block
+    ;
+
+constructorImplementation
+    : CONSTRUCTOR methodIdentifier (formalParameterList)? SEMI block
+    ;
+
+destructorImplementation
+    : DESTRUCTOR methodIdentifier (formalParameterList)? SEMI block
     ;
 
 formalParameterList
@@ -257,10 +277,6 @@ identifierList
 
 constList
     : constant (COMMA constant)*
-    ;
-
-functionDeclaration
-    : FUNCTION identifier (formalParameterList)? COLON resultType SEMI block
     ;
 
 resultType
@@ -292,7 +308,7 @@ variable
     : (AT identifier | identifier) (
         LBRACK expression (COMMA expression)* RBRACK
         | LBRACK2 expression (COMMA expression)* RBRACK2
-        | DOT identifier
+        | DOT identifier // dot access for fields/methods
         | POINTER
     )*
     ;
@@ -338,9 +354,9 @@ signedFactor
     ;
 
 factor
-    : variable
+    : functionDesignator // Check functions first
+    | variable
     | LPAREN expression RPAREN
-    | functionDesignator
     | unsignedConstant
     | set_
     | NOT factor
@@ -355,7 +371,7 @@ unsignedConstant
     ;
 
 functionDesignator
-    : identifier LPAREN parameterList RPAREN
+    : variable LPAREN (parameterList)? RPAREN
     ;
 
 parameterList
@@ -377,7 +393,7 @@ element
     ;
 
 procedureStatement
-    : identifier (LPAREN parameterList RPAREN)?
+    : variable (LPAREN (parameterList)? RPAREN)?
     ;
 
 actualParameter
@@ -394,11 +410,6 @@ gotoStatement
 
 emptyStatement_
     :
-    ;
-
-empty_
-    :
-    /* empty */
     ;
 
 structuredStatement
@@ -422,7 +433,7 @@ conditionalStatement
     ;
 
 ifStatement
-    : IF expression THEN statement (: ELSE statement)?
+    : IF expression THEN statement (ELSE statement)?
     ;
 
 caseStatement
@@ -471,326 +482,170 @@ recordVariableList
     : variable (COMMA variable)*
     ;
 
-AND
-    : 'AND'
-    ;
-
-ARRAY
-    : 'ARRAY'
-    ;
-
-BEGIN
-    : 'BEGIN'
-    ;
-
-BOOLEAN
-    : 'BOOLEAN'
-    ;
-
-CASE
-    : 'CASE'
-    ;
-
-CHAR
-    : 'CHAR'
-    ;
-
-CHR
-    : 'CHR'
-    ;
-
-CONST
-    : 'CONST'
-    ;
-
-DIV
-    : 'DIV'
-    ;
-
-DO
-    : 'DO'
-    ;
-
-DOWNTO
-    : 'DOWNTO'
-    ;
-
-ELSE
-    : 'ELSE'
-    ;
-
-END
-    : 'END'
-    ;
-
-FILE
-    : 'FILE'
-    ;
-
-FOR
-    : 'FOR'
-    ;
-
-FUNCTION
-    : 'FUNCTION'
-    ;
-
-GOTO
-    : 'GOTO'
-    ;
-
-IF
-    : 'IF'
-    ;
-
-IN
-    : 'IN'
-    ;
-
-INTEGER
-    : 'INTEGER'
-    ;
-
-LABEL
-    : 'LABEL'
-    ;
-
-MOD
-    : 'MOD'
-    ;
-
-NIL
-    : 'NIL'
-    ;
-
-NOT
-    : 'NOT'
-    ;
-
-OF
-    : 'OF'
-    ;
-
-OR
-    : 'OR'
-    ;
-
-PACKED
-    : 'PACKED'
-    ;
-
-PROCEDURE
-    : 'PROCEDURE'
-    ;
-
-PROGRAM
-    : 'PROGRAM'
-    ;
-
-REAL
-    : 'REAL'
-    ;
-
-RECORD
-    : 'RECORD'
-    ;
-
-REPEAT
-    : 'REPEAT'
-    ;
-
-SET
-    : 'SET'
-    ;
-
-THEN
-    : 'THEN'
-    ;
-
-TO
-    : 'TO'
-    ;
-
-TYPE
-    : 'TYPE'
-    ;
-
-UNTIL
-    : 'UNTIL'
-    ;
-
-VAR
-    : 'VAR'
-    ;
+// --- OBJECT ORIENTED EXTENSIONS ---
 
-WHILE
-    : 'WHILE'
+classType
+    : CLASS (LPAREN ancestorList RPAREN)? classBody END
     ;
 
-WITH
-    : 'WITH'
+classBody
+    : classMemberSection*
     ;
 
-PLUS
-    : '+'
+classMemberSection
+    : visibilitySection
+    | classMemberDecl SEMI
     ;
 
-MINUS
-    : '-'
+visibilitySection
+    : visibilitySpecifier (classMemberDecl SEMI)*
     ;
 
-STAR
-    : '*'
+visibilitySpecifier
+    : PRIVATE
+    | PROTECTED
+    | PUBLIC
+    | PUBLISHED
     ;
 
-SLASH
-    : '/'
-    ;
-
-ASSIGN
-    : ':='
-    ;
-
-COMMA
-    : ','
-    ;
-
-SEMI
-    : ';'
-    ;
-
-COLON
-    : ':'
-    ;
-
-EQUAL
-    : '='
-    ;
-
-NOT_EQUAL
-    : '<>'
-    ;
-
-LT
-    : '<'
-    ;
-
-LE
-    : '<='
-    ;
-
-GE
-    : '>='
-    ;
-
-GT
-    : '>'
-    ;
-
-LPAREN
-    : '('
-    ;
-
-RPAREN
-    : ')'
-    ;
-
-LBRACK
-    : '['
-    ;
-
-LBRACK2
-    : '(.'
-    ;
-
-RBRACK
-    : ']'
-    ;
-
-RBRACK2
-    : '.)'
-    ;
-
-POINTER
-    : '^'
-    ;
-
-AT
-    : '@'
-    ;
-
-DOT
-    : '.'
-    ;
-
-DOTDOT
-    : '..'
-    ;
-
-LCURLY
-    : '{'
-    ;
-
-RCURLY
-    : '}'
-    ;
-
-UNIT
-    : 'UNIT'
-    ;
-
-INTERFACE
-    : 'INTERFACE'
-    ;
-
-USES
-    : 'USES'
-    ;
-
-STRING
-    : 'STRING'
-    ;
-
-IMPLEMENTATION
-    : 'IMPLEMENTATION'
-    ;
-
-TRUE
-    : 'TRUE'
-    ;
-
-FALSE
-    : 'FALSE'
-    ;
-
-WS
-    : [ \t\r\n] -> skip
-    ;
-
-COMMENT_1
-    : '(*' .*? '*)' -> skip
-    ;
-
-COMMENT_2
-    : '{' .*? '}' -> skip
-    ;
-
-IDENT
-    : ('A' .. 'Z') ('A' .. 'Z' | '0' .. '9' | '_')*
-    ;
-
-STRING_LITERAL
-    : '\'' ('\'\'' | ~ ('\''))* '\''
-    ;
-
-NUM_INT
-    : ('0' .. '9')+
-    ;
-
-NUM_REAL
-    : ('0' .. '9')+ (('.' ('0' .. '9')+ (EXPONENT)?)? | EXPONENT)
-    ;
-
-fragment EXPONENT
-    : ('E') ('+' | '-')? ('0' .. '9')+
-    ;
+classMemberDecl
+    : fieldDecl
+    | methodDecl
+    | constructorDecl
+    | destructorDecl
+    ;
+
+fieldDecl
+    : identifierList COLON type_
+    ;
+
+methodDecl
+    : PROCEDURE identifier (formalParameterList)? methodDirective*
+    | FUNCTION identifier (formalParameterList)? COLON resultType methodDirective*
+    ;
+
+constructorDecl
+    : CONSTRUCTOR identifier (formalParameterList)? methodDirective*
+    ;
+
+destructorDecl
+    : DESTRUCTOR identifier (formalParameterList)? methodDirective*
+    ;
+
+methodDirective
+    : VIRTUAL
+    | OVERRIDE
+    | ABSTRACT
+    ;
+
+ancestorList
+    : identifier (COMMA identifier)*
+    ;
+
+interfaceType
+    : INTERFACE (LPAREN ancestorList RPAREN)? interfaceBody END
+    ;
+
+interfaceBody
+    : interfaceMemberDecl*
+    ;
+
+interfaceMemberDecl
+    : PROCEDURE identifier (formalParameterList)? SEMI
+    | FUNCTION identifier (formalParameterList)? COLON resultType SEMI
+    ;
+
+// --- LEXER RULES ---
+
+AND : 'AND';
+ARRAY : 'ARRAY';
+BEGIN : 'BEGIN';
+BOOLEAN : 'BOOLEAN';
+CASE : 'CASE';
+CHAR : 'CHAR';
+CHR : 'CHR';
+CONST : 'CONST';
+DIV : 'DIV';
+DO : 'DO';
+DOWNTO : 'DOWNTO';
+ELSE : 'ELSE';
+END : 'END';
+FILE : 'FILE';
+FOR : 'FOR';
+FUNCTION : 'FUNCTION';
+GOTO : 'GOTO';
+IF : 'IF';
+IN : 'IN';
+INTEGER : 'INTEGER';
+LABEL : 'LABEL';
+MOD : 'MOD';
+NIL : 'NIL';
+NOT : 'NOT';
+OF : 'OF';
+OR : 'OR';
+PACKED : 'PACKED';
+PROCEDURE : 'PROCEDURE';
+PROGRAM : 'PROGRAM';
+REAL : 'REAL';
+RECORD : 'RECORD';
+REPEAT : 'REPEAT';
+SET : 'SET';
+THEN : 'THEN';
+TO : 'TO';
+TYPE : 'TYPE';
+UNTIL : 'UNTIL';
+VAR : 'VAR';
+WHILE : 'WHILE';
+WITH : 'WITH';
+PLUS : '+';
+MINUS : '-';
+STAR : '*';
+SLASH : '/';
+ASSIGN : ':=';
+COMMA : ',';
+SEMI : ';';
+COLON : ':';
+EQUAL : '=';
+NOT_EQUAL : '<>';
+LT : '<';
+LE : '<=';
+GE : '>=';
+GT : '>';
+LPAREN : '(';
+RPAREN : ')';
+LBRACK : '[';
+LBRACK2 : '(.';
+RBRACK : ']';
+RBRACK2 : '.)';
+POINTER : '^';
+AT : '@';
+DOT : '.';
+DOTDOT : '..';
+LCURLY : '{';
+RCURLY : '}';
+UNIT : 'UNIT';
+INTERFACE : 'INTERFACE';
+USES : 'USES';
+STRING : 'STRING';
+IMPLEMENTATION : 'IMPLEMENTATION';
+TRUE : 'TRUE';
+FALSE : 'FALSE';
+CLASS : 'CLASS';
+CONSTRUCTOR : 'CONSTRUCTOR';
+DESTRUCTOR : 'DESTRUCTOR';
+PRIVATE : 'PRIVATE';
+PROTECTED : 'PROTECTED';
+PUBLIC : 'PUBLIC';
+PUBLISHED : 'PUBLISHED';
+VIRTUAL : 'VIRTUAL';
+OVERRIDE : 'OVERRIDE';
+ABSTRACT : 'ABSTRACT';
+WS : [ \t\r\n]+ -> skip;
+COMMENT_1 : '(*' .*? '*)' -> skip;
+COMMENT_2 : '{' .*? '}' -> skip;
+IDENT : [A-Z_] [A-Z0-9_]*;
+STRING_LITERAL : '\'' ('\'\'' | ~('\''))* '\'';
+NUM_INT : [0-9]+;
+NUM_REAL : [0-9]+ (('.' [0-9]+ (EXPONENT)?) | EXPONENT);
+
+fragment EXPONENT : 'E' [+-]? [0-9]+;
