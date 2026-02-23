@@ -53,6 +53,21 @@ public class InterpreterTest {
         runTestFile("test7.pas");
     }
 
+    @Test
+    void test8() {
+        runTestFile("test8.pas");
+    }
+
+    @Test
+    void test9() {
+        runTestFile("test9.pas");
+    }
+
+    @Test
+    void test10() {
+        runTestFile("test10.pas");
+    }
+
     private void runTestFile(String filename) {
         try {
             System.out.println("\n\nRunning: " + filename);
