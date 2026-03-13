@@ -19,22 +19,11 @@ I explore the core principles behind language design and implementation, includi
 - Runtime environments
 - Memory models
 - Intermediate representations
+- Functional Programming
 
 The emphasis is on building foundational knowledge in how high-level languages are translated and executed.
 
 For each project in this repository, I included a dedicated `README` file with instructions for setup and execution. Please refer to the respective project `README` for details.
-
----
-
-## Language Implementation
-
-As part of this work, I explore the implementation of:
-
-- Parse tree construction
-- AST traversal using visitor patterns
-- Semantic analysis
-- Runtime evaluation
-- Code generation fundamentals
 
 ---
 
@@ -61,9 +50,5 @@ This work connects formal language theory with practical systems-level implement
 - `ANTLR`
 - `Maven`
 - `JUnit`
-
----
-
-## Objective
-
-The objective of this repository is to document and demonstrate my understanding of programming language construction, from grammar specification through execution semantics.
+- `FORTH`
+- `Haskell`

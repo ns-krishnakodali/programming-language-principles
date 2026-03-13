@@ -1,4 +1,4 @@
-# System Files
+# Files
 .DS_Store
 Thumbs.db
 .idea/
@@ -9,9 +9,6 @@ out/
 # Compiled class file
 *.class
 
-# Log file
-*.log
-
 # Package Files #
 *.jar
 *.war
@@ -20,3 +17,9 @@ out/
 *.zip
 *.tar.gz
 *.rar
+
+# Misc
+*.log
+Requirements.md
+dist-newstyle/
+dist/
