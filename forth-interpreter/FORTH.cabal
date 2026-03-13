@@ -13,10 +13,12 @@ name:                FORTH
 version:             0.1.0.0
 
 -- A short (one-line) description of the package.
--- synopsis:            
+synopsis:            A simple FORTH interpreter in Haskell
 
 -- A longer description of the package.
--- description:         
+description:         A FORTH language interpreter supporting arithmetic,
+                     stack manipulation, string operations, output, and
+                     user-defined functions.
 
 -- The license under which the package is released.
 license:             MIT
@@ -57,21 +59,28 @@ executable FORTH
   -- Base language which the package is written in.
   default-language:    Haskell2010
 
+test-suite ValSpec
+    type:                exitcode-stdio-1.0
+    main-is:             ValSpec.hs
+    other-modules:       Val
+    build-depends:       base >=4.10 && <9.11
+                        ,hspec, hspec-contrib
+                        ,QuickCheck
+    default-language:    Haskell2010
+
 test-suite EvalSpec
     type:                exitcode-stdio-1.0
     main-is:             EvalSpec.hs
-    other-modules:       Val, Eval, Interpret       
+    other-modules:       Val, Eval
     build-depends:       base >=4.10 && <9.11
-                        ,flow >=1.0.19
                         ,hspec, hspec-contrib
                         ,QuickCheck
-                        ,containers
     default-language:    Haskell2010
-  
+
 test-suite InterpretSpec
     type:                exitcode-stdio-1.0
     main-is:             InterpretSpec.hs
-    other-modules:       Val, Eval, Interpret       
+    other-modules:       Val, Eval, Interpret
     build-depends:       base >=4.10 && <9.11
                         ,flow >=1.0.19
                         ,hspec, hspec-contrib

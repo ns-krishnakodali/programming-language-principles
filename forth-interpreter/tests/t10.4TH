@@ -1,0 +1,5 @@
+: SQUARE DUP * ;
+: CUBE DUP DUP * * ;
+3 SQUARE . CR
+3 CUBE . CR
+2 10 ^ . CR
