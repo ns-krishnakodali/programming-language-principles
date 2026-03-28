@@ -297,11 +297,23 @@ simpleStatement
     : assignmentStatement
     | procedureStatement
     | gotoStatement
+    | breakStatement
+    | continueStatement
     | emptyStatement_
     ;
 
 assignmentStatement
     : variable ASSIGN expression
+    ;
+
+// --- BREAK and CONTINUE statements ---
+
+breakStatement
+    : BREAK
+    ;
+
+continueStatement
+    : CONTINUE
     ;
 
 variable
@@ -561,10 +573,12 @@ AND : 'AND';
 ARRAY : 'ARRAY';
 BEGIN : 'BEGIN';
 BOOLEAN : 'BOOLEAN';
+BREAK : 'BREAK';
 CASE : 'CASE';
 CHAR : 'CHAR';
 CHR : 'CHR';
 CONST : 'CONST';
+CONTINUE : 'CONTINUE';
 DIV : 'DIV';
 DO : 'DO';
 DOWNTO : 'DOWNTO';
@@ -643,6 +657,7 @@ ABSTRACT : 'ABSTRACT';
 WS : [ \t\r\n]+ -> skip;
 COMMENT_1 : '(*' .*? '*)' -> skip;
 COMMENT_2 : '{' .*? '}' -> skip;
+LINE_COMMENT : '//' ~[\r\n]* -> skip;
 IDENT : [A-Z_] [A-Z0-9_]*;
 STRING_LITERAL : '\'' ('\'\'' | ~('\''))* '\'';
 NUM_INT : [0-9]+;

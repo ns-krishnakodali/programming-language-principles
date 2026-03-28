@@ -10,16 +10,21 @@ import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Scanner;
 import java.util.Set;
 
 public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
 
-    private final Deque<Map<String, Object>> scopes = new ArrayDeque<>();
+    private final Map<String, Object> globalScope = new LinkedHashMap<>();
+    private final Deque<Map<String, Object>> localScopes = new ArrayDeque<>();
     private final Map<String, ClassDescriptor> classes = new LinkedHashMap<>();
     private final Map<String, Set<String>> interfaces = new LinkedHashMap<>();
     private final Map<String, MethodDescriptor> globals = new LinkedHashMap<>();
     private final Deque<DelphiObject> selfStack = new ArrayDeque<>();
+    private final Map<String, Object> constants = new LinkedHashMap<>();
+    private boolean constantPropagationLog = true;
+    private boolean inGlobalBlock = true;
     private String currentFunctionReturnVar = null;
     private Scanner stdin;
 
@@ -27,6 +32,7 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
 
     @Override
     public Object visitProgram(DelphiParser.ProgramContext ctx) {
+        inGlobalBlock = true;
         pushScope();
         visit(ctx.block());
         popScope();
@@ -83,11 +89,14 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
 
     @Override
     public Object visitConstantDefinitionPart(DelphiParser.ConstantDefinitionPartContext ctx) {
-        for (var constantDefinitionCtx : ctx.constantDefinition())
-            declare(constantDefinitionCtx.identifier().getText(), evalConstant(constantDefinitionCtx.constant()));
+        for (var constantDefinitionCtx : ctx.constantDefinition()) {
+            String name = constantDefinitionCtx.identifier().getText();
+            Object value = evalConstant(constantDefinitionCtx.constant());
+            declare(name, value);
+            constants.put(name.toLowerCase(), value);
+        }
         return null;
     }
-
 
     @Override
     public Object visitCompoundStatement(DelphiParser.CompoundStatementContext ctx) {
@@ -116,11 +125,30 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
     public Object visitSimpleStatement(DelphiParser.SimpleStatementContext ctx) {
         if (ctx.assignmentStatement() != null) return visit(ctx.assignmentStatement());
         if (ctx.procedureStatement() != null) return visit(ctx.procedureStatement());
+        if (ctx.breakStatement() != null) return visit(ctx.breakStatement());
+        if (ctx.continueStatement() != null) return visit(ctx.continueStatement());
         return null;
     }
 
     @Override
+    public Object visitBreakStatement(DelphiParser.BreakStatementContext ctx) {
+        throw new BreakException();
+    }
+
+    @Override
+    public Object visitContinueStatement(DelphiParser.ContinueStatementContext ctx) {
+        throw new ContinueException();
+    }
+
+    @Override
     public Object visitAssignmentStatement(DelphiParser.AssignmentStatementContext ctx) {
+        if (constantPropagationLog) {
+            Object folded = tryConstantFold(ctx.expression());
+            if (folded != null) {
+                System.out.println("[AST] " + ctx.variable().getText() + " := " + folded
+                        + "  (folded from: " + ctx.expression().getText() + ")");
+            }
+        }
         Object value = visit(ctx.expression());
         doAssign(ctx.variable(), value);
         return null;
@@ -169,15 +197,37 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
 
     @Override
     public Object visitWhileStatement(DelphiParser.WhileStatementContext ctx) {
-        while (isTruth(visit(ctx.expression()))) visit(ctx.statement());
+        pushScope();
+        try {
+            while (isTruth(visit(ctx.expression()))) {
+                try {
+                    visit(ctx.statement());
+                } catch (ContinueException ignored) {
+                } catch (BreakException e) {
+                    break;
+                }
+            }
+        } finally {
+            popScope();
+        }
         return null;
     }
 
     @Override
     public Object visitRepeatStatement(DelphiParser.RepeatStatementContext ctx) {
-        do {
-            visit(ctx.statements());
-        } while (!isTruth(visit(ctx.expression())));
+        pushScope();
+        try {
+            do {
+                try {
+                    visit(ctx.statements());
+                } catch (ContinueException ignored) {
+                } catch (BreakException e) {
+                    return null;
+                }
+            } while (!isTruth(visit(ctx.expression())));
+        } finally {
+            popScope();
+        }
         return null;
     }
 
@@ -189,16 +239,31 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
         int to = toInt(visit(ctx.forList().finalValue().expression()));
 
         boolean down = ctx.forList().DOWNTO() != null;
-        if (!down) {
-            for (int idx = from; idx <= to; idx++) {
-                set(var, idx);
-                visit(ctx.statement());
+        pushScope();
+        try {
+            if (!down) {
+                for (int idx = from; idx <= to; idx++) {
+                    set(var, idx);
+                    try {
+                        visit(ctx.statement());
+                    } catch (ContinueException ignored) {
+                    } catch (BreakException e) {
+                        break;
+                    }
+                }
+            } else {
+                for (int idx = from; idx >= to; idx--) {
+                    set(var, idx);
+                    try {
+                        visit(ctx.statement());
+                    } catch (ContinueException ignored) {
+                    } catch (BreakException e) {
+                        break;
+                    }
+                }
             }
-        } else {
-            for (int idx = from; idx >= to; idx--) {
-                set(var, idx);
-                visit(ctx.statement());
-            }
+        } finally {
+            popScope();
         }
         return null;
     }
@@ -339,8 +404,24 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
         return null;
     }
 
-    // Private methods
+    // Constant propagation
 
+    public void setConstantPropagationLog(boolean enabled) {
+        this.constantPropagationLog = enabled;
+    }
+
+    public Object tryConstantFold(DelphiParser.ExpressionContext ctx) {
+        return foldExpression(ctx);
+    }
+
+    public String printAST(DelphiParser.AssignmentStatementContext ctx) {
+        String varName = ctx.variable().getText();
+        Object folded = tryConstantFold(ctx.expression());
+        if (folded != null) return varName + " = " + folded;
+        return varName + " = " + ctx.expression().getText();
+    }
+
+    // Private methods
 
     private Scanner getStdin() {
         if (stdin == null) {
@@ -349,21 +430,23 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
         return stdin;
     }
 
-
     private void pushScope() {
-        scopes.push(new LinkedHashMap<>());
+        localScopes.push(new LinkedHashMap<>());
     }
 
     private void popScope() {
-        scopes.pop();
+        localScopes.pop();
     }
 
     private void set(String name, Object value) {
         String key = name.toLowerCase();
-        for (Map<String, Object> s : scopes) {
-            if (s.containsKey(key)) {
-                s.put(key, value);
+        for (Map<String, Object> scope : localScopes) {
+            if (scope.containsKey(key)) {
+                scope.put(key, value);
                 syncResultAlias(key, value);
+                if (globalScope.containsKey(key)) {
+                    globalScope.put(key, value);
+                }
                 return;
             }
         }
@@ -374,36 +457,69 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
                 return;
             }
         }
-        assert scopes.peek() != null;
-        scopes.peek().put(key, value);
+        if (globalScope.containsKey(key)) {
+            globalScope.put(key, value);
+            for (Map<String, Object> s : localScopes) {
+                if (s.containsKey(key)) {
+                    s.put(key, value);
+                    break;
+                }
+            }
+            return;
+        }
+        if (!localScopes.isEmpty()) {
+            localScopes.peek().put(key, value);
+        } else {
+            globalScope.put(key, value);
+        }
     }
 
     private void syncResultAlias(String keyJustSet, Object value) {
         if (currentFunctionReturnVar == null) return;
-        Map<String, Object> top = scopes.peek();
-        if (top == null) return;
-        if (keyJustSet.equals("result") && top.containsKey(currentFunctionReturnVar)) {
-            top.put(currentFunctionReturnVar, value);
-        } else if (keyJustSet.equals(currentFunctionReturnVar) && top.containsKey("result")) {
-            top.put("result", value);
+        Map<String, Object> peekMap = localScopes.peek();
+        if (peekMap == null) return;
+        if (keyJustSet.equals("result") && peekMap.containsKey(currentFunctionReturnVar)) {
+            peekMap.put(currentFunctionReturnVar, value);
+        } else if (keyJustSet.equals(currentFunctionReturnVar) && peekMap.containsKey("result")) {
+            peekMap.put("result", value);
         }
     }
 
     private Object get(String name) {
-        String k = name.toLowerCase();
-        for (Map<String, Object> scope : scopes) {
-            if (scope.containsKey(k)) return scope.get(k);
+        String nameLC = name.toLowerCase();
+        for (Map<String, Object> scope : localScopes) {
+            if (scope.containsKey(nameLC)) return scope.get(nameLC);
         }
         if (!selfStack.isEmpty()) {
             DelphiObject self = selfStack.peek();
-            if (self.fields.containsKey(k)) return self.fields.get(k);
+            if (self.fields.containsKey(nameLC)) return self.fields.get(nameLC);
         }
+        if (globalScope.containsKey(nameLC)) return globalScope.get(nameLC);
         return null;
     }
 
     private void declare(String name, Object value) {
-        assert scopes.peek() != null;
-        scopes.peek().put(name.toLowerCase(), value);
+        String key = name.toLowerCase();
+        if (inGlobalBlock && localScopes.size() == 1) {
+            globalScope.put(key, value);
+            if (Objects.nonNull(localScopes.peek())) {
+                localScopes.peek().put(key, value);
+            }
+        } else if (localScopes.isEmpty()) {
+            globalScope.put(key, value);
+        } else {
+            localScopes.peek().put(key, value);
+        }
+    }
+
+    private void syncGlobalsToLocalMirrors() {
+        for (Map<String, Object> scope : localScopes) {
+            for (String key : scope.keySet()) {
+                if (globalScope.containsKey(key)) {
+                    scope.put(key, globalScope.get(key));
+                }
+            }
+        }
     }
 
     private Object resolveChainForMethodCall(List<String> chain) {
@@ -444,7 +560,8 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
             String memberName = md.identifier().getText().toLowerCase();
             MethodDescriptor methodDescriptor = new MethodDescriptor(memberName);
             methodDescriptor.isFunction = md.FUNCTION() != null;
-            if (methodDescriptor.isFunction && md.resultType() != null) methodDescriptor.returnType = md.resultType().getText();
+            if (methodDescriptor.isFunction && md.resultType() != null)
+                methodDescriptor.returnType = md.resultType().getText();
             if (md.formalParameterList() != null) extractParams(methodDescriptor, md.formalParameterList());
             cd.methods.put(memberName, methodDescriptor);
         } else if (mem.constructorDecl() != null) {
@@ -514,25 +631,31 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
 
     private void extractParams(MethodDescriptor m, DelphiParser.FormalParameterListContext fpl) {
         for (var sec : fpl.formalParameterSection()) {
+            boolean isVar = sec.VAR() != null;
             if (sec.parameterGroup() != null) {
-                for (var id : sec.parameterGroup().identifierList().identifier())
+                String typeStr = sec.parameterGroup().typeIdentifier().getText();
+                for (var id : sec.parameterGroup().identifierList().identifier()) {
                     m.paramNames.add(id.getText().toLowerCase());
+                    m.paramTypes.add(typeStr);
+                    m.paramIsVar.add(isVar);
+                }
             }
         }
     }
 
 
     private Object evalConstant(DelphiParser.ConstantContext ctx) {
-        if (ctx.unsignedNumber() != null) return evalUnsignedNumber(ctx.unsignedNumber());
+        if (ctx.unsignedNumber() != null) {
+            Object numVal = evalUnsignedNumber(ctx.unsignedNumber());
+            if (ctx.sign() != null && ctx.sign().MINUS() != null) return negate(numVal);
+            return numVal;
+        }
         if (ctx.string() != null) return stripQuotes(ctx.string().getText());
         if (ctx.constantChr() != null) return evalChr(ctx.constantChr());
         if (ctx.identifier() != null) {
             Object v = get(ctx.identifier().getText());
+            if (v == null) v = constants.get(ctx.identifier().getText().toLowerCase());
             return (ctx.sign() != null && ctx.sign().MINUS() != null) ? negate(v) : v;
-        }
-        if (ctx.sign() != null) {
-            Object n = evalUnsignedNumber(ctx.unsignedNumber());
-            return ctx.sign().MINUS() != null ? negate(n) : n;
         }
         return null;
     }
@@ -619,6 +742,40 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
                 }
                 yield true;
             }
+            case "inc" -> {
+                if (!args.isEmpty() && ctx != null && ctx.parameterList() != null) {
+                    var ap = ctx.parameterList().actualParameter(0);
+                    DelphiParser.ExpressionContext expr = ap.expression();
+                    if (expr.simpleExpression() != null
+                            && expr.simpleExpression().term() != null
+                            && expr.simpleExpression().term().signedFactor() != null
+                            && expr.simpleExpression().term().signedFactor().factor() != null
+                            && expr.simpleExpression().term().signedFactor().factor().variable() != null) {
+                        DelphiParser.VariableContext vc =
+                                expr.simpleExpression().term().signedFactor().factor().variable();
+                        int increment = args.size() > 1 ? toInt(args.get(1)) : 1;
+                        doAssign(vc, toInt(args.getFirst()) + increment);
+                    }
+                }
+                yield true;
+            }
+            case "dec" -> {
+                if (!args.isEmpty() && ctx != null && ctx.parameterList() != null) {
+                    var ap = ctx.parameterList().actualParameter(0);
+                    DelphiParser.ExpressionContext expr = ap.expression();
+                    if (expr.simpleExpression() != null
+                            && expr.simpleExpression().term() != null
+                            && expr.simpleExpression().term().signedFactor() != null
+                            && expr.simpleExpression().term().signedFactor().factor() != null
+                            && expr.simpleExpression().term().signedFactor().factor().variable() != null) {
+                        DelphiParser.VariableContext vc =
+                                expr.simpleExpression().term().signedFactor().factor().variable();
+                        int decrement = args.size() > 1 ? toInt(args.get(1)) : 1;
+                        doAssign(vc, toInt(args.getFirst()) - decrement);
+                    }
+                }
+                yield true;
+            }
             default -> false;
         };
     }
@@ -653,6 +810,8 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
             case "length" -> a0 == null ? 0 : a0.toString().length();
             case "inttostr" -> a0 == null ? "" : String.valueOf(toInt(a0));
             case "strtoint" -> a0 == null ? 0 : Integer.parseInt(a0.toString().trim());
+            case "odd" -> a0 != null && (toInt(a0) % 2 != 0);
+            case "sqr" -> a0 == null ? 0 : toInt(a0) * toInt(a0);
             case "readln", "read" -> getStdin().hasNextLine() ? getStdin().nextLine() : "";
             default -> null;
         };
@@ -724,6 +883,8 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
     private Object callMethod(DelphiObject obj, String methodName, List<Object> args) {
         MethodDescriptor methodDescriptor = obj.clazz.lookupMethod(methodName);
         if (methodDescriptor == null) return null;
+        boolean savedInGlobal = inGlobalBlock;
+        inGlobalBlock = false;
         selfStack.push(obj);
         pushScope();
         declare("self", obj);
@@ -747,6 +908,7 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
             result = re.value;
         } finally {
             currentFunctionReturnVar = savedReturnVar;
+            inGlobalBlock = savedInGlobal;
             popScope();
             selfStack.pop();
         }
@@ -754,8 +916,21 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
     }
 
     private Object callGlobal(MethodDescriptor m, List<Object> args) {
+        Deque<Map<String, Object>> savedLocalScopes = new ArrayDeque<>(localScopes);
+        localScopes.clear();
+
+        boolean savedInGlobal = inGlobalBlock;
+        inGlobalBlock = false;
+
         pushScope();
         bindArgs(m, args);
+
+        for (Map.Entry<String, Object> entry : globalScope.entrySet()) {
+            if (Objects.nonNull(localScopes.peek()) && !localScopes.peek().containsKey(entry.getKey())) {
+                localScopes.peek().put(entry.getKey(), entry.getValue());
+            }
+        }
+
         Object result = null;
         String savedReturnVar = currentFunctionReturnVar;
         try {
@@ -775,7 +950,11 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
             result = re.value;
         } finally {
             currentFunctionReturnVar = savedReturnVar;
+            inGlobalBlock = savedInGlobal;
             popScope();
+            localScopes.clear();
+            for (var s : savedLocalScopes) localScopes.addLast(s);
+            syncGlobalsToLocalMirrors();
         }
         return result;
     }
@@ -788,6 +967,86 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
     private String simpleName(String full) {
         int dot = full.lastIndexOf('.');
         return (dot >= 0 ? full.substring(dot + 1) : full).toLowerCase();
+    }
+
+    private Object foldExpression(DelphiParser.ExpressionContext ctx) {
+        Object left = foldSimpleExpression(ctx.simpleExpression());
+        if (left == null) return null;
+        if (ctx.relationaloperator() == null) return left;
+        Object right = foldExpression(ctx.expression());
+        if (right == null) return null;
+
+        var op = ctx.relationaloperator();
+        if (op.EQUAL() != null) return eq(left, right);
+        if (op.NOT_EQUAL() != null) return !eq(left, right);
+        double l = toDouble(left), r = toDouble(right);
+        if (op.LT() != null) return l < r;
+        if (op.LE() != null) return l <= r;
+        if (op.GT() != null) return l > r;
+        if (op.GE() != null) return l >= r;
+        return null;
+    }
+
+    private Object foldSimpleExpression(DelphiParser.SimpleExpressionContext ctx) {
+        Object left = foldTerm(ctx.term());
+        if (left == null) return null;
+        if (ctx.additiveoperator() == null) return left;
+        Object right = foldSimpleExpression(ctx.simpleExpression());
+        if (right == null) return null;
+
+        var op = ctx.additiveoperator();
+        if (op.PLUS() != null) return add(left, right);
+        if (op.MINUS() != null) return sub(left, right);
+        return null;
+    }
+
+    private Object foldTerm(DelphiParser.TermContext ctx) {
+        Object left = foldSignedFactor(ctx.signedFactor());
+        if (left == null) return null;
+        if (ctx.multiplicativeoperator() == null) return left;
+        Object right = foldTerm(ctx.term());
+        if (right == null) return null;
+
+        var op = ctx.multiplicativeoperator();
+        if (op.STAR() != null) return mul(left, right);
+        if (op.SLASH() != null) {
+            double d = toDouble(right);
+            return d == 0 ? null : toDouble(left) / d;
+        }
+        if (op.DIV() != null) {
+            int val = toInt(right);
+            return val == 0 ? null : toInt(left) / val;
+        }
+        if (op.MOD() != null) {
+            int val = toInt(right);
+            return val == 0 ? null : toInt(left) % val;
+        }
+        return null;
+    }
+
+    private Object foldSignedFactor(DelphiParser.SignedFactorContext ctx) {
+        Object val = foldFactor(ctx.factor());
+        if (val == null) return null;
+        return ctx.MINUS() != null ? negate(val) : val;
+    }
+
+    private Object foldFactor(DelphiParser.FactorContext ctx) {
+        if (ctx.unsignedConstant() != null) {
+            if (ctx.unsignedConstant().unsignedNumber() != null)
+                return evalUnsignedNumber(ctx.unsignedConstant().unsignedNumber());
+            if (ctx.unsignedConstant().string() != null)
+                return stripQuotes(ctx.unsignedConstant().string().getText());
+            return null;
+        }
+        if (ctx.expression() != null) return foldExpression(ctx.expression());
+        if (ctx.bool_() != null) return ctx.bool_().TRUE() != null;
+        if (ctx.variable() != null && ctx.functionDesignator() == null) {
+            List<String> chain = varChain(ctx.variable());
+            if (chain.size() == 1) {
+                return constants.get(chain.getFirst());
+            }
+        }
+        return null;
     }
 
     private Object add(Object lObj, Object rObj) {
@@ -937,6 +1196,8 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
         boolean isFunction;
         String returnType;
         List<String> paramNames = new ArrayList<>();
+        List<String> paramTypes = new ArrayList<>();
+        List<Boolean> paramIsVar = new ArrayList<>();
         DelphiParser.ConstructorImplementationContext constructorCtx;
         DelphiParser.DestructorImplementationContext destructorCtx;
         DelphiParser.FunctionDeclarationContext functionCtx;
@@ -953,6 +1214,18 @@ public class DelphiInterpreter extends DelphiBaseVisitor<Object> {
         ReturnException(Object v) {
             super(null, null, true, false);
             this.value = v;
+        }
+    }
+
+    static class BreakException extends RuntimeException {
+        BreakException() {
+            super(null, null, true, false);
+        }
+    }
+
+    static class ContinueException extends RuntimeException {
+        ContinueException() {
+            super(null, null, true, false);
         }
     }
 }
