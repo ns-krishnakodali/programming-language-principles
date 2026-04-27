@@ -1,202 +1,197 @@
-# Delphi Interpreter
+# Delphi Interpreter and LLVM Compiler
 
-Delphi is an object-oriented extension of the Pascal language. This project implements a Delphi interpreter using `Java`
-and `ANTLR 4`.
+This project keeps the existing Delphi interpreter from Projects 1 and 2 and adds a second backend that compiles a supported Delphi/Pascal subset to LLVM IR.
 
-The interpreter parses and executes Delphi programs by walking the parse tree generated from the grammar.
+The frontend is still based on `ANTLR 4` and `Java 21`. The parser/lexer are reused as-is; no ANTLR-generated sources are manually edited.
 
-The source code is located under the package:
+## Source Layout
+
+Main sources live under:
 
 ```bash
-org.compiler.delphi
+src/main/java/org/compiler/delphi
 ```
 
----
-
-## Grammar
-
-The `Delphi` grammar is located at:
+Grammar:
 
 ```bash
 src/main/antlr4/Delphi.g4
 ```
 
-It extends Pascal with support for:
+Generated parser sources are produced by Maven under:
 
-- Classes
-- Constructors and destructors
-- Encapsulation
-- Inheritance
-- Interfaces
-- While-do, for-do, and repeat-until loops
-- Break and continue keywords
-- User-defined procedures and functions with formal parameters
-
-`ANTLR` generates the lexer and parser during the Maven build process.
-
----
-
-## Features
-
-The interpreter supports:
-
-- Class definitions and object creation
-- Constructors and destructors
-- Method declarations and invocation
-- Global procedures and functions
-- Inheritance
-- Interfaces
-- Integer and basic built-in operations
-- Terminal input and output
-- While-do and for-do loops with break and continue
-- Repeat-until loops with break and continue
-- Static scoping for procedures and functions
-- Recursive function calls
-- Formal parameter passing in procedures and functions
-- Constant propagation
-
----
-
-## Scoping
-
-The interpreter implements static (lexical) scoping:
-
-- The program's main block defines the global scope
-- Each procedure or function call creates a new local scope
-- Functions can only see their own locals and global variables
-- Intermediate caller scopes are not visible to the callee
-- While, for, and repeat loops each create their own sub-scope
-- Scope chains are maintained and restored correctly across recursive calls
-
----
-
-## Break and Continue
-
-The `break` and `continue` keywords are supported inside all loop types:
-
-- `break` exits the innermost enclosing loop immediately
-- `continue` skips to the next iteration of the innermost loop
-- Both work correctly in nested loop scenarios where only the inner loop is affected
-
----
-
-## Constant Propagation
-
-A simple version of constant propagation is implemented. Expressions consisting entirely of compile-time constants and
-literal values are evaluated at parse time. For example, given:
-
-```pascal
-const
-  A = 10;
-  B = 11;
-  C = 2;
+```bash
+target/generated-sources/antlr4/org/compiler/delphi
 ```
 
-The expression `C * (A + B)` is folded to `42` during interpretation. The `tryConstantFold` and `printAST` methods on
-the interpreter can be used to inspect folded results.
+Compiled generated classes end up under:
 
----
+```bash
+target/classes/org/compiler/delphi
+```
 
-## Formal Parameter Passing
+Sample generated LLVM IR files are checked in under:
 
-Procedures and functions support typed formal parameter declarations. Parameters are correctly scoped within the
-function's local scope and do not leak into the global scope. The interpreter tracks parameter names, types, and
-var/value mode for each declared parameter.
+```bash
+examples/llvm
+```
 
----
+## Backends
+
+### Interpreter
+
+The original interpreter is still present in:
+
+```bash
+src/main/java/org/compiler/delphi/DelphiInterpreter.java
+```
+
+It continues to support the Project 1 / Project 2 execution path and is still covered by the existing test suite.
+
+### LLVM Compiler
+
+The new compiler backend is implemented in:
+
+```bash
+src/main/java/org/compiler/delphi/DelphiCompiler.java
+src/main/java/org/compiler/delphi/DelphiCompilerMain.java
+src/main/java/org/compiler/delphi/DelphiFrontend.java
+```
+
+`DelphiCompilerMain` compiles a `.pas` file into a `.ll` file.
+
+## Compiler Subset
+
+The LLVM backend intentionally implements a procedural subset that covers roughly 70% of the language work from the earlier projects:
+
+- Global and local scalar variables: `INTEGER`, `BOOLEAN`, `STRING`
+- Global and local named constants
+- Assignments
+- Integer arithmetic: `+`, `-`, `*`, `div`, `mod`
+- Boolean operators: `and`, `or`, `not`
+- Relational operators: `=`, `<>`, `<`, `<=`, `>`, `>=`
+- `if ... then ... else`
+- `case`
+- `while`, `repeat ... until`, `for`, `downto`
+- `break` and `continue`
+- Top-level procedures and functions
+- Recursive functions
+- Value parameters
+- Built-in `write` and `writeln`
+- Built-in helper functions: `succ`, `pred`, `sqr`, `odd`
+
+Unsupported in the compiler backend:
+
+- Classes, constructors, destructors, inheritance, interfaces
+- Nested procedures/functions
+- `var` parameters
+- Arrays, records, sets, files, pointers, `with`
+- `read` / `readln`
+- `REAL`
+- String comparison/concatenation in code generation
+- `goto`
+
+Unsupported compiler features fail with a clear `CompilerException` instead of emitting invalid IR.
 
 ## Requirements
 
 - Java 21
 - Maven
-- IntelliJ (Recommended)
+- `clang` if you want to validate or assemble generated LLVM IR locally
+- Optional for WASM follow-up: `llc` and `wasm-ld`
 
----
+## Build
 
-## Project Structure
-
-```bash
-src/main/antlr4
-    Delphi.g4
-
-src/main/java
-    org/compiler/delphi/
-      DelphiInterpreter.java
-      DelphiMain.java
-
-src/test/resources
-    *.pas test programs
-
-src/test/java
-    JUnit test class
-```
-
----
-
-## Build Instructions
-
-Generate ANTLR sources:
+Generate parser sources:
 
 ```bash
 mvn clean generate-sources
 ```
 
-In IntelliJ, mark the directory:
-
-```bash
-target/generated-sources/antlr4
-```
-
-as **Generated Sources Root**.
-
-Then compile the project:
+Compile everything:
 
 ```bash
 mvn clean compile
 ```
 
----
-
-## Running Tests
-
-All test programs are located in:
-
-```bash
-src/test/resources
-```
-
-To execute the test suite:
+Run the full test suite:
 
 ```bash
 mvn test
 ```
 
-Each JUnit test executes a specific `.pas` program located in `src/test/resources` and runs it through the interpreter.
+The test suite now covers both:
 
----
+- Existing interpreter behavior (`InterpreterTest`)
+- LLVM IR generation and unsupported-feature rejection (`CompilerTest`)
 
-## Test Coverage
+## Generate LLVM IR
 
-| Test   | Covers                                                    |
-|--------|-----------------------------------------------------------|
-| test1  | Arithmetic, if-then-else                                  |
-| test2  | For loop, while loop, repeat-until                        |
-| test3  | Class, constructor, destructor, methods                   |
-| test4  | Class with ReadLn input, method calls                     |
-| test5  | Inheritance, method override                              |
-| test6  | Multi-level inheritance, polymorphic describe             |
-| test7  | Interface declaration, multiple classes                   |
-| test8  | Global functions with parameters, nested calls            |
-| test9  | Class with constructor parameters, field access           |
-| test10 | Case statement, constants, for loop                       |
-| test11 | Break in while, for, downto, and nested loops             |
-| test12 | Continue in for, while, and repeat loops                  |
-| test13 | Static scoping across procedure and function calls        |
-| test14 | Nested procedures, recursion (Factorial, Fibonacci)       |
-| test15 | Formal parameters, composed calls, boolean functions      |
-| test16 | Break and continue in repeat-until and nested loops       |
-| test17 | Constant propagation with named constants and expressions |
+Compile a Delphi/Pascal file into LLVM IR:
 
----
+```bash
+mvn -q -DskipTests compile exec:java \
+  -Dexec.mainClass=org.compiler.delphi.DelphiCompilerMain \
+  -Dexec.args="src/test/resources/test1.pas output.ll"
+```
 
-ANTLR source generation is automatically handled by the Maven plugin during the build process based on the grammar.
+You can also invoke the class directly after compilation:
+
+```bash
+java -cp target/classes:$HOME/.m2/repository/org/antlr/antlr4-runtime/4.13.1/antlr4-runtime-4.13.1.jar \
+  org.compiler.delphi.DelphiCompilerMain src/test/resources/test1.pas output.ll
+```
+
+If no output path is provided, the compiler writes a sibling `.ll` file next to the input.
+
+## Checked-In LLVM Examples
+
+The following sample Delphi programs have checked-in LLVM IR outputs:
+
+- `src/test/resources/test1.pas` -> `examples/llvm/test1.ll`
+- `src/test/resources/test2.pas` -> `examples/llvm/test2.ll`
+- `src/test/resources/test8.pas` -> `examples/llvm/test8.ll`
+- `src/test/resources/test10.pas` -> `examples/llvm/test10.ll`
+- `src/test/resources/test15.pas` -> `examples/llvm/test15.ll`
+- `src/test/resources/test17.pas` -> `examples/llvm/test17.ll`
+
+These example `.ll` files were also assembled locally with `clang -c -x ir ...` to catch IR syntax issues.
+
+## Validate or Assemble LLVM IR
+
+To assemble a generated `.ll` file into an object file:
+
+```bash
+clang -c -x ir output.ll -o output.o
+```
+
+On this machine, `clang` is available and was used to validate the checked-in `.ll` examples.
+
+## Optional WASM Follow-Up
+
+The required implementation in this repository stops at LLVM IR generation. If you want to continue to WebAssembly, a typical toolchain flow is:
+
+```bash
+llc -march=wasm32 -filetype=obj output.ll -o output.o
+wasm-ld --no-entry --export=main --allow-undefined -o output.wasm output.o
+```
+
+Notes:
+
+- `llc` and `wasm-ld` were not installed in the current environment, so this step was not executed here.
+- The current IR uses `printf` for `write` / `writeln`, so a browser-ready runtime would need a compatible libc/WASI path or a different output strategy for host I/O.
+
+## Existing Interpreter Coverage
+
+The original interpreter tests still exercise:
+
+- Arithmetic and conditionals
+- Loops, `break`, `continue`
+- Classes and object behavior
+- Inheritance and interfaces
+- Procedures/functions and parameter passing
+- Static scoping
+- Recursion
+- Constant propagation
+
+Existing functionality from Projects 1 and 2 remains intact.
