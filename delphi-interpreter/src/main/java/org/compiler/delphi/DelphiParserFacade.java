@@ -7,8 +7,8 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import java.io.IOException;
 import java.nio.file.Path;
 
-public final class DelphiFrontend {
-    private DelphiFrontend() {
+public final class DelphiParserFacade {
+    private DelphiParserFacade() {
     }
 
     public static DelphiParser.ProgramContext parse(Path path) throws IOException {

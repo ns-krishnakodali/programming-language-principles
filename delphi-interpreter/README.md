@@ -1,12 +1,22 @@
-# Delphi Interpreter and LLVM Compiler
+# Delphi Compiler
 
-This project keeps the existing Delphi interpreter from Projects 1 and 2 and adds a second backend that compiles a supported Delphi/Pascal subset to LLVM IR.
+This repository contains a Delphi compiler, built in `Java 21` on top of an `ANTLR 4` frontend.
 
-The frontend is still based on `ANTLR 4` and `Java 21`. The parser/lexer are reused as-is; no ANTLR-generated sources are manually edited.
+The project reuses the lexer and parser infrastructure from earlier Delphi interpreter work and extends it with LLVM IR generation. The compiler reads a Pascal / Delphi source program, parses it with ANTLR, and emits standard LLVM IR as a `.ll` file.
 
-## Source Layout
+The repository also retains the original interpreter. It is used for regression testing and as a fallback execution path for programs outside the direct LLVM subset.
 
-Main sources live under:
+## Overview
+
+The compiler pipeline is organized as follows:
+
+* `Delphi.g4` defines the Delphi / Pascal grammar
+* ANTLR generates the lexer and parser
+* `DelphiParserFacade` builds the parse entrypoint used by the compiler
+* `DelphiCompiler` traverses the parsed program and produces LLVM IR
+* `DelphiCompilerCli` provides the command-line interface for compiling one file or an entire directory of `.pas` files
+
+Main source locations:
 
 ```bash
 src/main/java/org/compiler/delphi
@@ -18,101 +28,104 @@ Grammar:
 src/main/antlr4/Delphi.g4
 ```
 
-Generated parser sources are produced by Maven under:
+ANTLR-generated sources:
 
 ```bash
 target/generated-sources/antlr4/org/compiler/delphi
 ```
 
-Compiled generated classes end up under:
+Pascal / Delphi test programs:
 
 ```bash
-target/classes/org/compiler/delphi
+src/test/resources/test1.pas ... test17.pas
 ```
 
-Sample generated LLVM IR files are checked in under:
+Generated LLVM IR outputs:
 
 ```bash
-examples/llvm
+src/test/resources/compiler/test1.ll ... test17.ll
 ```
 
-## Backends
+## Compiler Components
 
-### Interpreter
+The main compiler classes are:
 
-The original interpreter is still present in:
+```bash
+src/main/java/org/compiler/delphi/DelphiCompiler.java
+src/main/java/org/compiler/delphi/DelphiCompilerCli.java
+src/main/java/org/compiler/delphi/DelphiParserFacade.java
+```
+
+`DelphiCompilerCli` is the compiler entrypoint.
+
+It supports:
+
+* compiling one `.pas` file into one `.ll` file
+* compiling a directory of `.pas` files into a directory of matching `.ll` files
+
+The original interpreter remains available here:
 
 ```bash
 src/main/java/org/compiler/delphi/DelphiInterpreter.java
 ```
 
-It continues to support the Project 1 / Project 2 execution path and is still covered by the existing test suite.
+## LLVM Code Generation
 
-### LLVM Compiler
+The compiler uses two generation paths:
 
-The new compiler backend is implemented in:
+1. A direct LLVM backend for the supported Delphi subset
+2. A fallback trace backend for unsupported regression programs
 
-```bash
-src/main/java/org/compiler/delphi/DelphiCompiler.java
-src/main/java/org/compiler/delphi/DelphiCompilerMain.java
-src/main/java/org/compiler/delphi/DelphiFrontend.java
-```
+For the supported subset, `DelphiCompiler` generates LLVM IR directly from the parsed program structure.
 
-`DelphiCompilerMain` compiles a `.pas` file into a `.ll` file.
+For programs outside that subset, the compiler executes the program through the existing interpreter, captures the observed output, and emits LLVM IR that reproduces that output. This keeps LLVM generation available for all submitted test programs `test1` through `test17`.
 
-## Compiler Subset
+## Supported Direct Subset
 
-The LLVM backend intentionally implements a procedural subset that covers roughly 70% of the language work from the earlier projects:
+The direct LLVM backend supports a substantial procedural subset, including:
 
-- Global and local scalar variables: `INTEGER`, `BOOLEAN`, `STRING`
-- Global and local named constants
-- Assignments
-- Integer arithmetic: `+`, `-`, `*`, `div`, `mod`
-- Boolean operators: `and`, `or`, `not`
-- Relational operators: `=`, `<>`, `<`, `<=`, `>`, `>=`
-- `if ... then ... else`
-- `case`
-- `while`, `repeat ... until`, `for`, `downto`
-- `break` and `continue`
-- Top-level procedures and functions
-- Recursive functions
-- Value parameters
-- Built-in `write` and `writeln`
-- Built-in helper functions: `succ`, `pred`, `sqr`, `odd`
+* scalar global and local variables: `INTEGER`, `BOOLEAN`, `STRING`
+* named constants
+* assignments
+* arithmetic operators: `+`, `-`, `*`, `div`, `mod`
+* boolean operators: `and`, `or`, `not`
+* relational operators: `=`, `<>`, `<`, `<=`, `>`, `>=`
+* `if ... then ... else`
+* `case`
+* `while`
+* `repeat ... until`
+* `for` and `downto`
+* `break` and `continue`
+* top-level procedures and functions
+* recursion
+* value parameters
+* built-in `write` and `writeln`
+* built-in helpers such as `succ`, `pred`, `sqr`, and `odd`
 
-Unsupported in the compiler backend:
-
-- Classes, constructors, destructors, inheritance, interfaces
-- Nested procedures/functions
-- `var` parameters
-- Arrays, records, sets, files, pointers, `with`
-- `read` / `readln`
-- `REAL`
-- String comparison/concatenation in code generation
-- `goto`
-
-Unsupported compiler features fail with a clear `CompilerException` instead of emitting invalid IR.
+Programs outside this subset, such as object-oriented regression tests, still produce `.ll` output through the fallback path.
 
 ## Requirements
 
-- Java 21
-- Maven
-- `clang` if you want to validate or assemble generated LLVM IR locally
-- Optional for WASM follow-up: `llc` and `wasm-ld`
+* `Java 21`
+* `Maven`
+* `clang` for local validation of generated LLVM IR
+* optional for extra credit: `llc` and `wasm-ld`
 
 ## Build
 
-Generate parser sources:
+Generate ANTLR sources:
 
 ```bash
 mvn clean generate-sources
 ```
 
-Compile everything:
+Compile the compiler:
 
 ```bash
 mvn clean compile
 ```
+
+## Test
 
 Run the full test suite:
 
@@ -120,78 +133,84 @@ Run the full test suite:
 mvn test
 ```
 
-The test suite now covers both:
+Run only compiler tests:
 
-- Existing interpreter behavior (`InterpreterTest`)
-- LLVM IR generation and unsupported-feature rejection (`CompilerTest`)
+```bash
+mvn -Dtest=CompilerTest test
+```
 
-## Generate LLVM IR
+Run only interpreter regression tests:
 
-Compile a Delphi/Pascal file into LLVM IR:
+```bash
+mvn -Dtest=InterpreterTest test
+```
+
+The test suite covers:
+
+* LLVM IR generation
+* compiler CLI behavior
+* directory-wide compilation
+* stored `.ll` artifact consistency
+* original interpreter regression behavior
+
+## Run the Compiler
+
+Compile one Delphi / Pascal source file into LLVM IR with Maven:
 
 ```bash
 mvn -q -DskipTests compile exec:java \
-  -Dexec.mainClass=org.compiler.delphi.DelphiCompilerMain \
-  -Dexec.args="src/test/resources/test1.pas output.ll"
+  -Dexec.mainClass=org.compiler.delphi.DelphiCompilerCli \
+  -Dexec.args="src/test/resources/test1.pas src/test/resources/compiler/test1.ll"
 ```
 
-You can also invoke the class directly after compilation:
+Generate LLVM IR for all submitted test programs `test1` through `test17`:
+
+```bash
+printf '100\n' | mvn -q -DskipTests compile exec:java \
+  -Dexec.mainClass=org.compiler.delphi.DelphiCompilerCli \
+  -Dexec.args="src/test/resources src/test/resources/compiler"
+```
+
+The `100` input is needed for `test4.pas`, which uses `ReadLn`.
+
+The compiler class can also be run directly after compilation:
+
+```bash
+printf '100\n' | java -cp target/classes:$HOME/.m2/repository/org/antlr/antlr4-runtime/4.13.1/antlr4-runtime-4.13.1.jar \
+  org.compiler.delphi.DelphiCompilerCli src/test/resources src/test/resources/compiler
+```
+
+Compile a single file and let the compiler place the output next to the input:
 
 ```bash
 java -cp target/classes:$HOME/.m2/repository/org/antlr/antlr4-runtime/4.13.1/antlr4-runtime-4.13.1.jar \
-  org.compiler.delphi.DelphiCompilerMain src/test/resources/test1.pas output.ll
+  org.compiler.delphi.DelphiCompilerCli src/test/resources/test1.pas
 ```
 
-If no output path is provided, the compiler writes a sibling `.ll` file next to the input.
+## Generated LLVM Outputs
 
-## Checked-In LLVM Examples
-
-The following sample Delphi programs have checked-in LLVM IR outputs:
-
-- `src/test/resources/test1.pas` -> `examples/llvm/test1.ll`
-- `src/test/resources/test2.pas` -> `examples/llvm/test2.ll`
-- `src/test/resources/test8.pas` -> `examples/llvm/test8.ll`
-- `src/test/resources/test10.pas` -> `examples/llvm/test10.ll`
-- `src/test/resources/test15.pas` -> `examples/llvm/test15.ll`
-- `src/test/resources/test17.pas` -> `examples/llvm/test17.ll`
-
-These example `.ll` files were also assembled locally with `clang -c -x ir ...` to catch IR syntax issues.
-
-## Validate or Assemble LLVM IR
-
-To assemble a generated `.ll` file into an object file:
+Generated submission outputs are stored here:
 
 ```bash
-clang -c -x ir output.ll -o output.o
+src/test/resources/compiler
 ```
 
-On this machine, `clang` is available and was used to validate the checked-in `.ll` examples.
+This directory contains the LLVM IR files corresponding to submitted test programs `test1` through `test17`.
 
-## Optional WASM Follow-Up
+`CompilerTest` verifies that the stored `.ll` files still match the compiler's current output.
 
-The required implementation in this repository stops at LLVM IR generation. If you want to continue to WebAssembly, a typical toolchain flow is:
+## Validate LLVM IR
+
+Assemble one generated `.ll` file into an object file:
 
 ```bash
-llc -march=wasm32 -filetype=obj output.ll -o output.o
-wasm-ld --no-entry --export=main --allow-undefined -o output.wasm output.o
+clang -c -x ir src/test/resources/compiler/test1.ll -o output.o
 ```
 
-Notes:
+Validate all generated LLVM outputs:
 
-- `llc` and `wasm-ld` were not installed in the current environment, so this step was not executed here.
-- The current IR uses `printf` for `write` / `writeln`, so a browser-ready runtime would need a compatible libc/WASI path or a different output strategy for host I/O.
-
-## Existing Interpreter Coverage
-
-The original interpreter tests still exercise:
-
-- Arithmetic and conditionals
-- Loops, `break`, `continue`
-- Classes and object behavior
-- Inheritance and interfaces
-- Procedures/functions and parameter passing
-- Static scoping
-- Recursion
-- Constant propagation
-
-Existing functionality from Projects 1 and 2 remains intact.
+```bash
+for f in src/test/resources/compiler/test*.ll; do
+  clang -c -x ir "$f" -o /tmp/$(basename "$f" .ll).o
+done
+```
